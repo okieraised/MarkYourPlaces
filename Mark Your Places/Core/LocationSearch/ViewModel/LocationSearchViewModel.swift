@@ -8,11 +8,19 @@
 import Foundation
 import MapKit
 
+enum LocationResultsViewConfig {
+    case ride
+    case saveLocation
+    
+}
+
 class LocationSearchViewModel: NSObject, ObservableObject {
     
     // Properties
     @Published var results = [MKLocalSearchCompletion]()
-    @Published var selectedLocationCoordinate: CLLocationCoordinate2D?
+    @Published var selectedLocation: Location?
+    @Published var pickupTime: String?
+    @Published var dropOffTime: String?
     
     
     private let searchCompleter = MKLocalSearchCompleter()
@@ -31,19 +39,23 @@ class LocationSearchViewModel: NSObject, ObservableObject {
         searchCompleter.queryFragment = queryFragment
     }
     
-    func selectLocation(_ localSearch: MKLocalSearchCompletion) {
-        locationSearch(forLocalSearchCompletion: localSearch) { response, error in
-            if let error = error {
-                print("ERROR: \(error.localizedDescription)")
-                return
+    func selectLocation(_ localSearch: MKLocalSearchCompletion, config: LocationResultsViewConfig) {
+        switch config {
+        case .ride:
+            locationSearch(forLocalSearchCompletion: localSearch) { response, error in
+                if let error = error {
+                    print("ERROR: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let item = response?.mapItems.first else { return }
+                
+                let coordinate = item.placemark.coordinate
+                self.selectedLocation = Location(title: localSearch.title, coordinate: coordinate)
             }
-            
-            guard let item = response?.mapItems.first else { return }
-            
-            let coordinate = item.placemark.coordinate
-            self.selectedLocationCoordinate = coordinate
+        case .saveLocation:
+            print("got here")
         }
-
     }
     
     func locationSearch(forLocalSearchCompletion localSearch: MKLocalSearchCompletion, completion: @escaping MKLocalSearch.CompletionHandler) {
@@ -56,7 +68,7 @@ class LocationSearchViewModel: NSObject, ObservableObject {
     }
     
     func computeRidePrice(forType type: RideType) -> Double {
-        guard let destCoordinate = selectedLocationCoordinate else {
+        guard let destCoordinate = selectedLocation?.coordinate else {
             return 0.0
         }
         guard let userLocation = self.userLocation else {
@@ -69,6 +81,38 @@ class LocationSearchViewModel: NSObject, ObservableObject {
         let tripDistanceInMeters = userCoordinate.distance(from: destination)
         
         return type.computePrice(for: tripDistanceInMeters)
+    }
+    
+    func getDestinationRoute(from userLocation: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D, completion: @escaping(MKRoute) -> Void) {
+        let userPlacemark = MKPlacemark(coordinate: userLocation)
+        let destPlacemark = MKPlacemark(coordinate: destination)
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: userPlacemark)
+        request.destination = MKMapItem(placemark: destPlacemark)
+        
+        let directions = MKDirections(request: request)
+        
+        directions.calculate { response, error in
+            if let error = error {
+                print("\(error.localizedDescription)")
+                return
+            }
+            
+            guard let route = response?.routes.first else {
+                return
+            }
+            self.configurePickupAndDropoffTime(with: route.expectedTravelTime)
+            completion(route)
+        }
+    }
+    
+    func configurePickupAndDropoffTime(with expectedTravelTime: Double) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "hh:mm a"
+        
+        pickupTime = formatter.string(from: Date())
+        dropOffTime = formatter.string(from: Date() + expectedTravelTime)
     }
     
 }
